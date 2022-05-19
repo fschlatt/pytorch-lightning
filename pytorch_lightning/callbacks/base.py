@@ -107,23 +107,12 @@ class Callback:
         """Called when the validation sanity check ends."""
 
     def on_train_batch_start(
-        self,
-        trainer: "pl.Trainer",
-        pl_module: "pl.LightningModule",
-        batch: Any,
-        batch_idx: int,
-        unused: int = 0,
+        self, trainer: "pl.Trainer", pl_module: "pl.LightningModule", batch: Any, batch_idx: int
     ) -> None:
         """Called when the train batch begins."""
 
     def on_train_batch_end(
-        self,
-        trainer: "pl.Trainer",
-        pl_module: "pl.LightningModule",
-        outputs: STEP_OUTPUT,
-        batch: Any,
-        batch_idx: int,
-        unused: int = 0,
+        self, trainer: "pl.Trainer", pl_module: "pl.LightningModule", outputs: STEP_OUTPUT, batch: Any, batch_idx: int
     ) -> None:
         """Called when the train batch ends."""
 
@@ -318,7 +307,7 @@ class Callback:
 
         Args:
             trainer: the current :class:`~pytorch_lightning.trainer.Trainer` instance.
-            pl_module: the current :class:`~pytorch_lightning.core.lightning.LightningModule` instance.
+            pl_module: the current :class:`~pytorch_lightning.core.module.LightningModule` instance.
             checkpoint: the checkpoint dictionary that will be saved.
 
         Returns:
@@ -338,7 +327,7 @@ class Callback:
 
         Args:
             trainer: the current :class:`~pytorch_lightning.trainer.Trainer` instance.
-            pl_module: the current :class:`~pytorch_lightning.core.lightning.LightningModule` instance.
+            pl_module: the current :class:`~pytorch_lightning.core.module.LightningModule` instance.
             callback_state: the callback state returned by ``on_save_checkpoint``.
 
         Note:

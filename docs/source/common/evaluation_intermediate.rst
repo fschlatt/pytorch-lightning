@@ -23,7 +23,7 @@ Testing
 
 Lightning allows the user to test their models with any compatible test dataloaders. This can be done before/after training
 and is completely agnostic to :meth:`~pytorch_lightning.trainer.trainer.Trainer.fit` call. The logic used here is defined under
-:meth:`~pytorch_lightning.core.lightning.LightningModule.test_step`.
+:meth:`~pytorch_lightning.core.module.LightningModule.test_step`.
 
 Testing is performed using the ``Trainer`` object's ``.test()`` method.
 
@@ -44,10 +44,13 @@ To run the test set after training completes, use this method.
     # (1) load the best checkpoint automatically (lightning tracks this for you)
     trainer.test(ckpt_path="best")
 
-    # (2) test using a specific checkpoint
+    # (2) load the last available checkpoint
+    trainer.test(ckpt_path="last")
+
+    # (3) test using a specific checkpoint
     trainer.test(ckpt_path="/path/to/my_checkpoint.ckpt")
 
-    # (3) test with an explicit model (will use this model and not load a checkpoint)
+    # (4) test with an explicit model (will use this model and not load a checkpoint)
     trainer.test(model)
 
 .. warning::
@@ -82,7 +85,7 @@ To run the test set on a pre-trained model, use this method.
 
     model = MyLightningModule.load_from_checkpoint(
         checkpoint_path="/path/to/pytorch_checkpoint.ckpt",
-        hparams_file="/path/to/test_tube/experiment/version/hparams.yaml",
+        hparams_file="/path/to/experiment/version/hparams.yaml",
         map_location=None,
     )
 
@@ -138,9 +141,9 @@ Validation
 **********
 
 Lightning allows the user to validate their models with any compatible ``val dataloaders``. This can be done before/after training.
-The logic associated to the validation is defined within the :meth:`~pytorch_lightning.core.lightning.LightningModule.validation_step`.
+The logic associated to the validation is defined within the :meth:`~pytorch_lightning.core.module.LightningModule.validation_step`.
 
-Apart from this ``.validate`` has same API as ``.test``, but would rely respectively on :meth:`~pytorch_lightning.core.lightning.LightningModule.validation_step` and :meth:`~pytorch_lightning.core.lightning.LightningModule.test_step`.
+Apart from this ``.validate`` has same API as ``.test``, but would rely respectively on :meth:`~pytorch_lightning.core.module.LightningModule.validation_step` and :meth:`~pytorch_lightning.core.module.LightningModule.test_step`.
 
 .. note::
     ``.validate`` method uses the same validation logic being used under validation happening within

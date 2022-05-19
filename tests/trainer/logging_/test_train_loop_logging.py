@@ -25,7 +25,7 @@ from torchmetrics import Accuracy
 
 from pytorch_lightning import callbacks, Trainer
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint, TQDMProgressBar
-from pytorch_lightning.core.lightning import LightningModule
+from pytorch_lightning.core.module import LightningModule
 from pytorch_lightning.utilities.exceptions import MisconfigurationException
 from tests.helpers.boring_model import BoringModel, RandomDataset, RandomDictDataset
 from tests.helpers.runif import RunIf
@@ -141,7 +141,7 @@ def test__training_step__step_end__epoch_end__log(tmpdir, batches, log_interval,
     """Tests that training_step_end and training_epoch_end can log."""
 
     class TestModel(BoringModel):
-        def training_step(self, batch, batch_idx):
+        def training_step(self, batch):
             loss = self.step(batch[0])
             self.log("a", loss, on_step=True, on_epoch=True)
             return loss

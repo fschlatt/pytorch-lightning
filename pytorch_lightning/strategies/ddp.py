@@ -204,7 +204,7 @@ class DDPStrategy(ParallelStrategy):
         self.cluster_environment.set_world_size(self.num_nodes * self.num_processes)
         rank_zero_only.rank = self.cluster_environment.global_rank()
 
-    def pre_configure_ddp(self):
+    def pre_configure_ddp(self) -> None:
         # if unset, default `find_unused_parameters` `True`
         # Many models require setting this parameter to True, as there are corner cases
         # when not all parameter backward hooks are fired by the autograd engine even if require_grad is set to True.
@@ -342,20 +342,20 @@ class DDPStrategy(ParallelStrategy):
 
     def validation_step(self, *args, **kwargs) -> Optional[STEP_OUTPUT]:
         with self.precision_plugin.val_step_context():
-            if isinstance(self.model, DistributedDataParallel):
+            if self.lightning_module.trainer.state.fn == TrainerFn.FITTING:
                 # used when calling `trainer.fit`
                 return self.model(*args, **kwargs)
             else:
                 # used when calling `trainer.validate`
-                return self.lightning_module.validation_step(*args, **kwargs)
+                return self.model.validation_step(*args, **kwargs)
 
     def test_step(self, *args, **kwargs) -> Optional[STEP_OUTPUT]:
         with self.precision_plugin.test_step_context():
-            return self.lightning_module.test_step(*args, **kwargs)
+            return self.model.test_step(*args, **kwargs)
 
     def predict_step(self, *args, **kwargs) -> STEP_OUTPUT:
         with self.precision_plugin.predict_step_context():
-            return self.lightning_module.predict_step(*args, **kwargs)
+            return self.model.predict_step(*args, **kwargs)
 
     def post_training_step(self):
         if not self.lightning_module.automatic_optimization:

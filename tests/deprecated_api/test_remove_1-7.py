@@ -22,7 +22,7 @@ import torch
 
 from pytorch_lightning import Callback, Trainer
 from pytorch_lightning.callbacks.lr_monitor import LearningRateMonitor
-from pytorch_lightning.loggers import LoggerCollection, TestTubeLogger
+from pytorch_lightning.loggers import LoggerCollection
 from pytorch_lightning.overrides.distributed import IndexBatchSamplerWrapper
 from pytorch_lightning.plugins.environments import (
     KubeflowEnvironment,
@@ -36,80 +36,6 @@ from tests.deprecated_api import _soft_unimport_module
 from tests.helpers import BoringModel
 from tests.loggers.test_logger import CustomLogger
 from tests.plugins.environments.test_lsf_environment import _make_rankfile
-
-
-def test_v1_7_0_moved_get_progress_bar_dict(tmpdir):
-    class TestModel(BoringModel):
-        def get_progress_bar_dict(self):
-            items = super().get_progress_bar_dict()
-            items.pop("v_num", None)
-            return items
-
-    trainer = Trainer(
-        default_root_dir=tmpdir,
-        fast_dev_run=True,
-    )
-    test_model = TestModel()
-    with pytest.deprecated_call(match=r"`LightningModule.get_progress_bar_dict` method was deprecated in v1.5"):
-        trainer.fit(test_model)
-    standard_metrics_postfix = trainer.progress_bar_callback.main_progress_bar.postfix
-    assert "loss" in standard_metrics_postfix
-    assert "v_num" not in standard_metrics_postfix
-
-    with pytest.deprecated_call(match=r"`trainer.progress_bar_dict` is deprecated in v1.5"):
-        _ = trainer.progress_bar_dict
-
-
-def test_v1_7_0_deprecated_on_task_dataloader(tmpdir):
-    class CustomBoringModel(BoringModel):
-        def on_train_dataloader(self):
-            print("on_train_dataloader")
-
-        def on_val_dataloader(self):
-            print("on_val_dataloader")
-
-        def on_test_dataloader(self):
-            print("on_test_dataloader")
-
-        def on_predict_dataloader(self):
-            print("on_predict_dataloader")
-
-    def _run(model, task="fit"):
-        trainer = Trainer(default_root_dir=tmpdir, fast_dev_run=2)
-        getattr(trainer, task)(model)
-
-    model = CustomBoringModel()
-
-    with pytest.deprecated_call(
-        match="Method `on_train_dataloader` is deprecated in v1.5.0 and will be removed in v1.7.0."
-    ):
-        _run(model, "fit")
-
-    with pytest.deprecated_call(
-        match="Method `on_val_dataloader` is deprecated in v1.5.0 and will be removed in v1.7.0."
-    ):
-        _run(model, "fit")
-
-    with pytest.deprecated_call(
-        match="Method `on_val_dataloader` is deprecated in v1.5.0 and will be removed in v1.7.0."
-    ):
-        _run(model, "validate")
-
-    with pytest.deprecated_call(
-        match="Method `on_test_dataloader` is deprecated in v1.5.0 and will be removed in v1.7.0."
-    ):
-        _run(model, "test")
-
-    with pytest.deprecated_call(
-        match="Method `on_predict_dataloader` is deprecated in v1.5.0 and will be removed in v1.7.0."
-    ):
-        _run(model, "predict")
-
-
-@mock.patch("pytorch_lightning.loggers.test_tube.Experiment")
-def test_v1_7_0_test_tube_logger(_, tmpdir):
-    with pytest.deprecated_call(match="The TestTubeLogger is deprecated since v1.5 and will be removed in v1.7"):
-        _ = TestTubeLogger(tmpdir)
 
 
 def test_v1_7_0_on_interrupt(tmpdir):
@@ -133,11 +59,6 @@ def test_v1_7_0_on_interrupt(tmpdir):
         match="The `on_keyboard_interrupt` callback hook was deprecated in v1.5 and will be removed in v1.7"
     ):
         trainer.fit(model)
-
-
-def test_v1_7_0_process_position_trainer_constructor(tmpdir):
-    with pytest.deprecated_call(match=r"Setting `Trainer\(process_position=5\)` is deprecated in v1.5"):
-        _ = Trainer(process_position=5)
 
 
 def test_v1_7_0_flush_logs_every_n_steps_trainer_constructor(tmpdir):
@@ -180,11 +101,6 @@ def test_v1_7_0_deprecate_lightning_distributed(tmpdir):
         from pytorch_lightning.distributed.dist import LightningDistributed
 
         _ = LightningDistributed()
-
-
-def test_v1_7_0_checkpoint_callback_trainer_constructor(tmpdir):
-    with pytest.deprecated_call(match=r"Setting `Trainer\(checkpoint_callback=True\)` is deprecated in v1.5"):
-        _ = Trainer(checkpoint_callback=True)
 
 
 def test_v1_7_0_deprecate_on_post_move_to_device(tmpdir):

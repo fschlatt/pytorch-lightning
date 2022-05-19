@@ -110,6 +110,7 @@ Lightning has a few built-in callbacks.
 
 ----------
 
+
 **************
 Best Practices
 **************
@@ -121,6 +122,11 @@ The following are best practices when using/designing callbacks.
 4. Directly calling methods (eg. `on_validation_end`) is strongly discouraged.
 5. Whenever possible, your callbacks should not depend on the order in which they are executed.
 
+
+-----------
+
+.. include:: entry_points.rst
+
 -----------
 
 .. _callback_hooks:
@@ -130,7 +136,7 @@ Callback API
 ************
 Here is the full API of methods available in the Callback base class.
 
-The :class:`~pytorch_lightning.callbacks.Callback` class is the base for all the callbacks in Lightning just like the :class:`~pytorch_lightning.core.lightning.LightningModule` is the base for all models.
+The :class:`~pytorch_lightning.callbacks.Callback` class is the base for all the callbacks in Lightning just like the :class:`~pytorch_lightning.core.module.LightningModule` is the base for all models.
 It defines a public interface that each callback implementation must follow, the key ones are:
 
 Properties
