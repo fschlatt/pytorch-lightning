@@ -5,10 +5,10 @@ from unittest import mock
 
 import pytest
 from lightning_utilities.core.imports import module_available
-from tests_app.helpers.utils import no_warning_call
+from lightning_utilities.test.warning import no_warning_call
 
 import pytorch_lightning as pl
-from lightning_app.components.multi_node.trainer import _LightningTrainerRunExecutor
+from lightning.app.components.multi_node.trainer import _LightningTrainerRunExecutor
 
 
 def dummy_callable(**kwargs):
@@ -66,7 +66,7 @@ def test_trainer_run_executor_mps_forced_cpu(accelerator_given, accelerator_expe
         ({"strategy": "ddp_sharded_spawn"}, {"strategy": "ddp_sharded"}),
     ],
 )
-@pytest.mark.skipif(not module_available("pytorch"), reason="Lightning is not available")
+@pytest.mark.skipif(not module_available("torch"), reason="PyTorch is not available")
 def test_trainer_run_executor_arguments_choices(
     args_given: dict,
     args_expected: dict,
@@ -93,7 +93,4 @@ def test_trainer_run_executor_arguments_choices(
 @pytest.mark.skipif(not module_available("lightning"), reason="lightning not available")
 def test_trainer_run_executor_invalid_strategy_instances():
     with pytest.raises(ValueError, match="DDP Spawned strategies aren't supported yet."):
-        _, _ = _get_args_after_tracer_injection(strategy=pl.strategies.DDPSpawnStrategy())
-
-    with pytest.raises(ValueError, match="DDP Spawned strategies aren't supported yet."):
-        _, _ = _get_args_after_tracer_injection(strategy=pl.strategies.DDPSpawnShardedStrategy())
+        _, _ = _get_args_after_tracer_injection(strategy=pl.strategies.DDPStrategy(start_method="spawn"))

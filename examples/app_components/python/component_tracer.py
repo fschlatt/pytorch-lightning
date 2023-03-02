@@ -1,11 +1,10 @@
 from lightning.app.components import TracerPythonScript
 from lightning.app.storage import Path
 from lightning.app.utilities.tracer import Tracer
-from pytorch_lightning import Trainer
+from lightning.pytorch import Trainer
 
 
 class PLTracerPythonScript(TracerPythonScript):
-
     """This component can be used for ANY PyTorch Lightning script to track its progress and extract its best model
     path."""
 
@@ -16,7 +15,7 @@ class PLTracerPythonScript(TracerPythonScript):
         self.best_model_path = None
 
     def configure_tracer(self) -> Tracer:
-        from pytorch_lightning.callbacks import Callback
+        from lightning.pytorch.callbacks import Callback
 
         class MyInjectedCallback(Callback):
             def __init__(self, lightning_work):

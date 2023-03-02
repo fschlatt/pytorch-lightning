@@ -1,4 +1,4 @@
-# Copyright The PyTorch Lightning team.
+# Copyright The Lightning AI team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -29,10 +29,10 @@ import torch
 import torchvision
 import torchvision.transforms as T
 
-from pytorch_lightning import cli_lightning_logo, LightningDataModule, LightningModule
-from pytorch_lightning.cli import LightningCLI
-from pytorch_lightning.profilers.pytorch import PyTorchProfiler
-from pytorch_lightning.utilities.model_helpers import get_torchvision_model
+from lightning.pytorch import cli_lightning_logo, LightningDataModule, LightningModule
+from lightning.pytorch.cli import LightningCLI
+from lightning.pytorch.profilers.pytorch import PyTorchProfiler
+from lightning.pytorch.utilities.model_helpers import get_torchvision_model
 
 DEFAULT_CMD_LINE = (
     "fit",
@@ -90,7 +90,6 @@ class ModelToProfile(LightningModule):
 
 
 class CIFAR10DataModule(LightningDataModule):
-
     transform = T.Compose([T.Resize(256), T.CenterCrop(224), T.ToTensor()])
 
     def train_dataloader(self, *args, **kwargs):
@@ -107,7 +106,10 @@ def cli_main():
         sys.argv += DEFAULT_CMD_LINE
 
     LightningCLI(
-        ModelToProfile, CIFAR10DataModule, save_config_overwrite=True, trainer_defaults={"profiler": PyTorchProfiler()}
+        ModelToProfile,
+        CIFAR10DataModule,
+        save_config_kwargs={"overwrite": True},
+        trainer_defaults={"profiler": PyTorchProfiler()},
     )
 
 

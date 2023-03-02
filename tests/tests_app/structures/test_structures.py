@@ -3,12 +3,12 @@ from copy import deepcopy
 
 import pytest
 
-from lightning_app import LightningApp, LightningFlow, LightningWork
-from lightning_app.runners import MultiProcessRuntime
-from lightning_app.storage.payload import Payload
-from lightning_app.structures import Dict, List
-from lightning_app.testing.helpers import EmptyFlow
-from lightning_app.utilities.enum import CacheCallsKeys, WorkStageStatus
+from lightning.app import LightningApp, LightningFlow, LightningWork
+from lightning.app.runners import MultiProcessRuntime
+from lightning.app.storage.payload import Payload
+from lightning.app.structures import Dict, List
+from lightning.app.testing.helpers import EmptyFlow
+from lightning.app.utilities.enum import CacheCallsKeys, WorkStageStatus
 
 
 def test_dict():
@@ -44,6 +44,7 @@ def test_dict():
             "_host": "127.0.0.1",
             "_paths": {},
             "_restarting": False,
+            "_display_name": "",
             "_internal_ip": "",
             "_cloud_compute": {
                 "type": "__cloud_compute__",
@@ -53,6 +54,7 @@ def test_dict():
                 "mounts": None,
                 "shm_size": 0,
                 "_internal_id": "default",
+                "interruptible": False,
             },
         }
         for k in ("a", "b", "c", "d")
@@ -76,6 +78,7 @@ def test_dict():
             "_host": "127.0.0.1",
             "_paths": {},
             "_restarting": False,
+            "_display_name": "",
             "_internal_ip": "",
             "_cloud_compute": {
                 "type": "__cloud_compute__",
@@ -85,6 +88,7 @@ def test_dict():
                 "mounts": None,
                 "shm_size": 0,
                 "_internal_id": "default",
+                "interruptible": False,
             },
         }
         for k in ("a", "b", "c", "d")
@@ -108,6 +112,7 @@ def test_dict():
             "_host": "127.0.0.1",
             "_paths": {},
             "_restarting": False,
+            "_display_name": "",
             "_internal_ip": "",
             "_cloud_compute": {
                 "type": "__cloud_compute__",
@@ -117,6 +122,7 @@ def test_dict():
                 "mounts": None,
                 "shm_size": 0,
                 "_internal_id": "default",
+                "interruptible": False,
             },
         }
         for k in ("a", "b", "c", "d")
@@ -193,6 +199,7 @@ def test_list():
             "_paths": {},
             "_restarting": False,
             "_internal_ip": "",
+            "_display_name": "",
             "_cloud_compute": {
                 "type": "__cloud_compute__",
                 "name": "default",
@@ -201,6 +208,7 @@ def test_list():
                 "mounts": None,
                 "shm_size": 0,
                 "_internal_id": "default",
+                "interruptible": False,
             },
         }
         for i in range(4)
@@ -225,6 +233,7 @@ def test_list():
             "_paths": {},
             "_restarting": False,
             "_internal_ip": "",
+            "_display_name": "",
             "_cloud_compute": {
                 "type": "__cloud_compute__",
                 "name": "default",
@@ -233,6 +242,7 @@ def test_list():
                 "mounts": None,
                 "shm_size": 0,
                 "_internal_id": "default",
+                "interruptible": False,
             },
         }
         for i in range(4)
@@ -252,6 +262,7 @@ def test_list():
             "_paths": {},
             "_restarting": False,
             "_internal_ip": "",
+            "_display_name": "",
             "_cloud_compute": {
                 "type": "__cloud_compute__",
                 "name": "default",
@@ -260,6 +271,7 @@ def test_list():
                 "mounts": None,
                 "shm_size": 0,
                 "_internal_id": "default",
+                "interruptible": False,
             },
         }
         for i in range(4)
@@ -350,12 +362,12 @@ def test_structure_with_iterate_and_fault_tolerance(run_once_iterable, cache_cal
             for work_idx, work in self.experimental_iterate(enumerate(self.iter), run_once=self.run_once_iterable):
                 if not self.restarting and work_idx == 1:
                     # gives time to the delta to be sent.
-                    self._exit()
+                    self.stop()
                 if isinstance(work, str) and isinstance(self.iter, Dict):
                     work = self.iter[work]
                 work.run()
             if self.looping > 0:
-                self._exit()
+                self.stop()
             self.looping += 1
 
     app = LightningApp(RootFlow(use_list, run_once_iterable, cache_calls))
@@ -405,7 +417,7 @@ class CheckpointFlow(LightningFlow):
         if hasattr(self, "counter"):
             self.counter += 1
             if self.counter >= self.exit:
-                self._exit()
+                self.stop()
         if self.depth >= 4:
             self.collection.run()
         else:
@@ -431,7 +443,7 @@ class FlowDict(LightningFlow):
             self.dict["w"] = SimpleCounterWork()
 
         if self.dict["w"].status.stage == WorkStageStatus.SUCCEEDED:
-            self._exit()
+            self.stop()
 
         self.dict["w"].run()
 
@@ -452,7 +464,7 @@ class FlowList(LightningFlow):
             self.list.append(SimpleCounterWork())
 
         if self.list[-1].status.stage == WorkStageStatus.SUCCEEDED:
-            self._exit()
+            self.stop()
 
         self.list[-1].run()
 
@@ -489,7 +501,7 @@ class FlowPayload(LightningFlow):
             for work in self.dst.values():
                 work.run(self.src.payload)
         if all(w.has_succeeded for w in self.dst.values()):
-            self._exit()
+            self.stop()
 
 
 def test_structures_with_payload():

@@ -1,4 +1,4 @@
-# Copyright The PyTorch Lightning team.
+# Copyright The Lightning AI team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,11 +21,19 @@ import torch
 import torch.distributed as torch_distrib
 import torch.nn.functional as F
 
-from pytorch_lightning import seed_everything, Trainer
-from pytorch_lightning.demos.boring_classes import BoringModel
-from pytorch_lightning.plugins.precision.apex_amp import ApexMixedPrecisionPlugin
-from pytorch_lightning.strategies import Strategy
+from lightning.fabric.utilities.imports import _TORCH_GREATER_EQUAL_2_0
+from lightning.pytorch import seed_everything, Trainer
+from lightning.pytorch.demos.boring_classes import BoringModel, ManualOptimBoringModel
+from lightning.pytorch.strategies import Strategy
 from tests_pytorch.helpers.runif import RunIf
+
+
+def assert_emtpy_grad(grad):
+    if _TORCH_GREATER_EQUAL_2_0:
+        assert grad is None
+    else:
+        if grad is not None:  # backward has been called
+            assert torch.all(grad == 0)
 
 
 class ManualOptModel(BoringModel):
@@ -37,14 +45,13 @@ class ManualOptModel(BoringModel):
         opt_a, opt_b = self.optimizers()
 
         # make sure there are no grads
-        if batch_idx > 0:
-            assert torch.all(self.layer.weight.grad == 0)
+        assert_emtpy_grad(self.layer.weight.grad)
 
         loss_1 = self.step(batch[0])
         self.manual_backward(loss_1)
         opt_a.step()
         opt_a.zero_grad()
-        assert torch.all(self.layer.weight.grad == 0)
+        assert_emtpy_grad(self.layer.weight.grad)
 
         loss_2 = self.step(batch[0])
         # ensure we forward the correct params to the optimizer
@@ -54,7 +61,7 @@ class ManualOptModel(BoringModel):
         assert self.layer.weight.grad is not None
         opt_b.step()
         opt_b.zero_grad()
-        assert torch.all(self.layer.weight.grad == 0)
+        assert_emtpy_grad(self.layer.weight.grad)
 
         return loss_2
 
@@ -66,68 +73,22 @@ class ManualOptModel(BoringModel):
 
 @pytest.mark.parametrize(
     "kwargs",
-    [
-        {},
-        pytest.param(
-            {"accelerator": "gpu", "devices": 1, "precision": 16, "amp_backend": "native"}, marks=RunIf(min_cuda_gpus=1)
-        ),
-        pytest.param(
-            {"accelerator": "gpu", "devices": 1, "precision": 16, "amp_backend": "apex"},
-            marks=RunIf(min_cuda_gpus=1, amp_apex=True),
-        ),
-    ],
+    [{}, pytest.param({"accelerator": "gpu", "devices": 1, "precision": "16-mixed"}, marks=RunIf(min_cuda_gpus=1))],
 )
-def test_multiple_optimizers_manual_no_return(tmpdir, kwargs):
-    apex_optimizer_patches = []
-    apex_optimizer_steps = []
-
-    class TestModel(ManualOptModel):
-        def training_step(self, batch, batch_idx):
-            # avoid returning a value
-            super().training_step(batch, batch_idx)
-
-        def training_epoch_end(self, outputs):
-            # outputs is empty as training_step does not return
-            # and it is not automatic optimization
-            assert not outputs
-
-        def on_train_start(self):
-            if kwargs.get("amp_backend") != "apex":
-                return
-            # extremely ugly. APEX patches all the native torch optimizers on `_initialize` which we call on
-            # `ApexMixedPrecisionPlugin.dispatch`. Additionally, their replacement `new_step` functions are locally
-            # defined so can't even patch those, thus we need to create the mock after APEX has been initialized
-            nonlocal apex_optimizer_patches, apex_optimizer_steps
-            for opt in self.trainer.optimizers:
-                # `amp.scale_loss` will also patch the step to avoid it when gradient overflow happens. avoid it
-                opt._amp_stash.already_patched = True
-                patch = mock.patch.object(opt, "step")
-                apex_optimizer_patches.append(patch)
-                apex_optimizer_steps.append(patch.start())
-
-        def on_train_end(self):
-            if kwargs.get("amp_backend") == "apex":
-                for p in apex_optimizer_patches:
-                    p.stop()
-
-    model = TestModel()
-    model.val_dataloader = None
-
+def test_multiple_optimizers_manual_call_counts(tmpdir, kwargs):
+    model = ManualOptModel()
     limit_train_batches = 2
-    plugins = [ApexMixedPrecisionPlugin(amp_level="O2")] if kwargs.get("amp_backend") == "apex" else []
-
     trainer = Trainer(
         default_root_dir=tmpdir,
         limit_train_batches=limit_train_batches,
-        limit_val_batches=2,
+        limit_val_batches=0,
         max_epochs=1,
         log_every_n_steps=1,
         enable_model_summary=False,
-        plugins=plugins,
         **kwargs,
     )
 
-    if kwargs.get("amp_backend") == "native":
+    if kwargs.get("precision") == "16-mixed":
         # mock the scaler instead of the optimizer step because it can be skipped with NaNs
         scaler_step_patch = mock.patch.object(
             trainer.precision_plugin.scaler, "step", wraps=trainer.precision_plugin.scaler.step
@@ -137,41 +98,11 @@ def test_multiple_optimizers_manual_no_return(tmpdir, kwargs):
     with mock.patch.object(Strategy, "backward", wraps=trainer.strategy.backward) as bwd_mock:
         trainer.fit(model)
     assert bwd_mock.call_count == limit_train_batches * 3
+    assert trainer.global_step == limit_train_batches * 2
 
-    if kwargs.get("amp_backend") == "native":
+    if kwargs.get("precision") == "16-mixed":
         scaler_step_patch.stop()
         assert scaler_step.call_count == len(model.optimizers()) * limit_train_batches
-    if kwargs.get("amp_backend") == "apex":
-        assert [s.call_count for s in apex_optimizer_steps] == [len(model.optimizers())] * limit_train_batches
-
-
-def test_multiple_optimizers_manual_return(tmpdir):
-    class TestModel(ManualOptModel):
-        def training_step(self, batch, batch_idx):
-            super().training_step(batch, batch_idx)
-            return {"something": "else"}
-
-        def training_epoch_end(self, outputs) -> None:
-            # outputs should be an array with an entry per optimizer
-            assert outputs == [{"something": "else"}, {"something": "else"}]
-
-    model = TestModel()
-    model.val_dataloader = None
-
-    limit_train_batches = 2
-    trainer = Trainer(
-        default_root_dir=tmpdir,
-        limit_train_batches=limit_train_batches,
-        limit_val_batches=2,
-        max_epochs=1,
-        log_every_n_steps=1,
-        enable_model_summary=False,
-    )
-
-    with mock.patch.object(Strategy, "backward", wraps=trainer.strategy.backward) as bwd_mock:
-        trainer.fit(model)
-    assert bwd_mock.call_count == limit_train_batches * 3
-    assert trainer.global_step == limit_train_batches * 2
 
 
 def test_multiple_optimizers_manual_log(tmpdir):
@@ -180,17 +111,12 @@ def test_multiple_optimizers_manual_log(tmpdir):
             loss_2 = super().training_step(batch, batch_idx)
             self.log("a", loss_2, on_epoch=True)
 
-        def training_epoch_end(self, outputs) -> None:
-            assert not outputs
-
     model = TestModel()
-    model.val_dataloader = None
-
     limit_train_batches = 2
     trainer = Trainer(
         default_root_dir=tmpdir,
         limit_train_batches=limit_train_batches,
-        limit_val_batches=2,
+        limit_val_batches=0,
         max_epochs=1,
         log_every_n_steps=1,
         enable_model_summary=False,
@@ -204,7 +130,7 @@ def test_multiple_optimizers_manual_log(tmpdir):
 
 # precision = 16 not yet working properly with mps backend
 @pytest.mark.parametrize("accelerator", [pytest.param("gpu", marks=RunIf(min_cuda_gpus=1))])
-def test_multiple_optimizers_manual_native_amp(tmpdir, accelerator):
+def test_multiple_optimizers_manual_amp(tmpdir, accelerator):
     model = ManualOptModel()
     model.val_dataloader = None
 
@@ -216,7 +142,7 @@ def test_multiple_optimizers_manual_native_amp(tmpdir, accelerator):
         max_epochs=1,
         log_every_n_steps=1,
         enable_model_summary=False,
-        precision=16,
+        precision="16-mixed",
         accelerator=accelerator,
         devices=1,
     )
@@ -247,9 +173,7 @@ class ManualOptimizationExtendedModel(BoringModel):
     def training_step(self, batch, batch_idx):
         self.called["training_step"] += 1
         opt = self.optimizers()
-        output = self.layer(batch)
-
-        loss = self.loss(batch, output)
+        loss = self.step(batch)
         loss /= loss.clone().detach()
         loss *= 0.1
 
@@ -261,7 +185,7 @@ class ManualOptimizationExtendedModel(BoringModel):
 
         return loss.detach() if self.detach else loss
 
-    def on_train_batch_end(self, outputs, batch, batch_idx):
+    def on_train_batch_end(self, *_):
         self.called["on_train_batch_end"] += 1
         after_before = self.layer.weight.clone()
         if self.should_update:
@@ -278,7 +202,7 @@ class ManualOptimizationExtendedModel(BoringModel):
             except Exception:
                 # almost no diff between before and after
                 assert torch.abs(torch.sum(self.weight_before) - torch.sum(after_before)).item() < 10e-6
-        assert torch.all(self.layer.weight.grad == 0)
+        assert_emtpy_grad(self.layer.weight.grad)
         self.count += 1
 
     def on_train_end(self):
@@ -293,17 +217,13 @@ def test_manual_optimization_and_return_tensor(tmpdir):
     `training_step`"""
 
     model = ManualOptimizationExtendedModel()
-    model.training_step_end = None
-    model.training_epoch_end = None
-
     trainer = Trainer(
         max_epochs=1,
         default_root_dir=tmpdir,
         limit_train_batches=10,
         limit_test_batches=0,
         limit_val_batches=0,
-        precision=16,
-        amp_backend="native",
+        precision="16-mixed",
         strategy="ddp_spawn",
         accelerator="gpu",
         devices=2,
@@ -346,9 +266,7 @@ def test_manual_optimization_and_accumulated_gradient(tmpdir):
         def training_step(self, batch, batch_idx):
             self.called["training_step"] += 1
             opt = self.optimizers()
-            output = self.layer(batch)
-
-            loss = self.loss(batch, output)
+            loss = self.step(batch)
             loss /= loss.clone().detach()
             loss *= 0.1
 
@@ -361,17 +279,17 @@ def test_manual_optimization_and_accumulated_gradient(tmpdir):
 
             return loss.detach() if self.detach else loss
 
-        def on_train_batch_end(self, outputs, batch, batch_idx):
+        def on_train_batch_end(self, *_):
             self.called["on_train_batch_end"] += 1
             after_before = self.layer.weight.clone()
             if self.should_update and self.should_have_updated:
                 assert not torch.equal(self.weight_before, after_before), self.count
-                assert torch.all(self.layer.weight.grad == 0)
+                assert_emtpy_grad(self.layer.weight.grad)
             else:
                 assert torch.equal(self.weight_before, after_before)
                 if self.count > 1:
                     if self.count % 4 == 1:
-                        assert torch.all(self.layer.weight.grad == 0)
+                        assert_emtpy_grad(self.layer.weight.grad)
                     else:
                         assert torch.sum(self.layer.weight.grad) != 0
             self.count += 1
@@ -382,17 +300,13 @@ def test_manual_optimization_and_accumulated_gradient(tmpdir):
             assert self.called["on_train_batch_end"] == 20
 
     model = ExtendedModel()
-    model.training_step_end = None
-    model.training_epoch_end = None
-
     trainer = Trainer(
         max_epochs=1,
         default_root_dir=tmpdir,
         limit_train_batches=20,
         limit_test_batches=0,
         limit_val_batches=0,
-        precision=16,
-        amp_backend="native",
+        precision="16-mixed",
         accelerator="gpu",
         devices=1,
     )
@@ -412,8 +326,7 @@ def test_multiple_optimizers_step(tmpdir):
             loss_1 = self.loss(loss_1, loss_1)
 
             # make sure there are no grads
-            if self.layer.weight.grad is not None:
-                assert torch.all(self.layer.weight.grad == 0)
+            assert_emtpy_grad(self.layer.weight.grad)
 
             self.manual_backward(loss_1)
             opt_a.step()
@@ -432,10 +345,6 @@ def test_multiple_optimizers_step(tmpdir):
             opt_b.zero_grad()
 
             return {"loss1": loss_1.detach(), "loss2": loss_2.detach()}
-
-        def training_epoch_end(self, outputs) -> None:
-            # outputs should be an array with an entry per optimizer
-            assert len(outputs) == 2
 
         # sister test: tests/plugins/test_amp_plugins.py::test_amp_gradient_unscale
         def on_after_backward(self) -> None:
@@ -460,10 +369,6 @@ def test_multiple_optimizers_step(tmpdir):
         def on_before_optimizer_step(self, optimizer, *_):
             self.check_grads_unscaled(optimizer)
 
-        def log_grad_norm(self, grad_norm_dict):
-            self.check_grads_unscaled()
-            assert len(grad_norm_dict)
-
     model = TestModel()
     model.val_dataloader = None
 
@@ -475,11 +380,9 @@ def test_multiple_optimizers_step(tmpdir):
         max_epochs=1,
         log_every_n_steps=1,
         enable_model_summary=False,
-        precision=16,
-        amp_backend="native",
+        precision="16-mixed",
         accelerator="gpu",
         devices=1,
-        track_grad_norm=2,
     )
 
     with mock.patch.object(Strategy, "backward", wraps=trainer.strategy.backward) as bwd_mock:
@@ -500,8 +403,7 @@ def test_step_with_optimizer_closure(tmpdir):
 
         def training_step(self, batch, batch_idx):
             # make sure there are no grads
-            if self.layer.weight.grad is not None:
-                assert torch.all(self.layer.weight.grad == 0)
+            assert_emtpy_grad(self.layer.weight.grad)
 
             opt = self.optimizers()
 
@@ -510,7 +412,7 @@ def test_step_with_optimizer_closure(tmpdir):
                 x = F.dropout(x, 0.1)
                 predictions = self(x)
                 predictions = F.dropout(predictions, 0.1)
-                loss = self.loss(None, predictions)
+                loss = self.loss(predictions)
                 return loss
 
             def optimizer_closure():
@@ -537,7 +439,6 @@ def test_step_with_optimizer_closure(tmpdir):
             assert not torch.equal(weight_before, weight_after)
 
     model = TestModel()
-    model.training_epoch_end = None
 
     limit_train_batches = 2
     trainer = Trainer(
@@ -579,8 +480,6 @@ def test_step_with_optimizer_closure_2(tmpdir):
             assert not torch.equal(weight_before, weight_after)
 
     model = TestModel()
-    model.training_epoch_end = None
-
     limit_train_batches = 4
     trainer = Trainer(
         default_root_dir=tmpdir,
@@ -621,7 +520,7 @@ def test_step_with_optimizer_closure_with_different_frequencies(mock_sgd_step, m
                 x = F.dropout(x, 0.1)
                 predictions = self(x)
                 predictions = F.dropout(predictions, 0.1)
-                loss = self.loss(None, predictions)
+                loss = self.loss(predictions)
                 return loss
 
             def gen_closure():
@@ -654,7 +553,6 @@ def test_step_with_optimizer_closure_with_different_frequencies(mock_sgd_step, m
 
     model = TestModel()
     model.val_dataloader = None
-    model.training_epoch_end = None
 
     limit_train_batches = 8
     trainer = Trainer(
@@ -766,8 +664,6 @@ def train_manual_optimization(tmpdir, strategy, model_cls=TesManualOptimizationD
     model = model_cls()
     model_copy = deepcopy(model)
     model.val_dataloader = None
-    model.training_epoch_end = None
-
     limit_train_batches = 8
     trainer = Trainer(
         default_root_dir=tmpdir,
@@ -860,9 +756,7 @@ class TestManualOptimizationDDPModelToggleModel(TesManualOptimizationDDPModel):
 
 @RunIf(min_cuda_gpus=2, standalone=True)
 def test_step_with_optimizer_closure_with_different_frequencies_ddp_with_toggle_model(tmpdir):
-    train_manual_optimization(
-        tmpdir, "ddp_find_unused_parameters_false", model_cls=TestManualOptimizationDDPModelToggleModel
-    )
+    train_manual_optimization(tmpdir, "ddp", model_cls=TestManualOptimizationDDPModelToggleModel)
 
 
 def test_lr_schedulers(tmpdir):
@@ -886,7 +780,6 @@ def test_lr_schedulers(tmpdir):
             return [optimizer_1, optimizer_2], [self.scheduler_1, self.scheduler_2]
 
     model = TestModel()
-    model.training_epoch_end = None
 
     trainer = Trainer(
         default_root_dir=tmpdir, max_epochs=1, limit_train_batches=1, limit_val_batches=1, limit_test_batches=1
@@ -903,14 +796,9 @@ def test_lr_schedulers_reduce_lr_on_plateau(tmpdir, scheduler_as_dict):
             self.scheduler_as_dict = scheduler_as_dict
             self.automatic_optimization = False
 
-        def training_step(self, batch, batch_idx):
-            return {"train_loss": torch.tensor([0.0])}
-
-        def training_epoch_end(self, outputs):
+        def on_train_epoch_end(self):
             scheduler = self.lr_schedulers()
-
-            loss = torch.stack([x["train_loss"] for x in outputs]).mean()
-            scheduler.step(loss)
+            scheduler.step(torch.tensor(0.0))
 
         def configure_optimizers(self):
             optimizer = torch.optim.SGD(self.parameters(), lr=0.1)
@@ -919,6 +807,7 @@ def test_lr_schedulers_reduce_lr_on_plateau(tmpdir, scheduler_as_dict):
                 scheduler = {
                     "scheduler": torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer),
                     "monitor": "train_loss",
+                    "interval": "step",  # not warned
                 }
             else:
                 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)
@@ -932,34 +821,16 @@ def test_lr_schedulers_reduce_lr_on_plateau(tmpdir, scheduler_as_dict):
     )
 
     if scheduler_as_dict:
-        with pytest.warns(RuntimeWarning, match="but the keys will be ignored"):
+        with pytest.warns(RuntimeWarning, match=r"\['monitor'\], but the keys will be ignored"):
             trainer.fit(model)
+        assert trainer.lr_scheduler_configs[0].interval == "step"
     else:
         trainer.fit(model)
 
 
 def test_lr_scheduler_step_not_called(tmpdir):
     """Test `lr_scheduler.step()` is not called in manual optimization."""
-
-    class TestModel(BoringModel):
-        def __init__(self):
-            super().__init__()
-            self.automatic_optimization = False
-
-        def training_step(self, batch, batch_idx):
-            opt = self.optimizers()
-
-            output = self(batch)
-            loss = self.loss(batch, output)
-
-            opt.zero_grad()
-            self.manual_backward(loss)
-            opt.step()
-
-    model = TestModel()
-    model.training_step_end = None
-    model.training_epoch_end = None
-
+    model = ManualOptimBoringModel()
     trainer = Trainer(max_epochs=1, default_root_dir=tmpdir, fast_dev_run=2)
 
     with patch("torch.optim.lr_scheduler.StepLR.step") as lr_step:
@@ -972,7 +843,7 @@ def test_lr_scheduler_step_not_called(tmpdir):
 
 
 @RunIf(min_cuda_gpus=1)
-@pytest.mark.parametrize("precision", [16, 32])
+@pytest.mark.parametrize("precision", ["16-mixed", "32-true"])
 def test_multiple_optimizers_logging(precision, tmpdir):
     """Tests that metrics are properly being logged."""
 
@@ -982,31 +853,28 @@ def test_multiple_optimizers_logging(precision, tmpdir):
             self.automatic_optimization = False
 
         def training_step(self, batch, batch_idx):
+            optimizer1, optimizer2 = self.optimizers()
             # Discriminator.
-            optimizer_idx = 0
-            optimizer = self.optimizers()[optimizer_idx]
-            self.toggle_optimizer(optimizer, optimizer_idx)
+            self.toggle_optimizer(optimizer1)
 
-            loss_d = self.loss(batch, self.layer(batch))
+            loss_d = self.step(batch)
             self.log("loss_d", loss_d, prog_bar=True)
 
-            optimizer.zero_grad()
+            optimizer1.zero_grad()
             self.manual_backward(loss_d)
-            optimizer.step()
-            self.untoggle_optimizer(optimizer_idx)
+            optimizer1.step()
+            self.untoggle_optimizer(optimizer1)
 
             # Generator.
-            optimizer_idx = 1
-            optimizer = self.optimizers()[optimizer_idx]
-            self.toggle_optimizer(optimizer, optimizer_idx)
+            self.toggle_optimizer(optimizer2)
 
-            loss_g = self.loss(batch, self.layer(batch))
+            loss_g = self.step(batch)
             self.log("loss_g", loss_g, prog_bar=True)
 
-            optimizer.zero_grad()
+            optimizer2.zero_grad()
             self.manual_backward(loss_g)
-            optimizer.step()
-            self.untoggle_optimizer(optimizer_idx)
+            optimizer2.step()
+            self.untoggle_optimizer(optimizer2)
 
         def configure_optimizers(self):
             optimizer = torch.optim.SGD(self.layer.parameters(), lr=0.1)
@@ -1014,7 +882,6 @@ def test_multiple_optimizers_logging(precision, tmpdir):
             return optimizer, optimizer_2
 
     model = TestModel()
-    model.training_epoch_end = None
     model.val_dataloader = None
 
     trainer = Trainer(
@@ -1033,17 +900,3 @@ def test_multiple_optimizers_logging(precision, tmpdir):
 
     assert set(trainer.logged_metrics) == {"loss_d", "loss_g"}
     assert set(trainer.progress_bar_metrics) == {"loss_d", "loss_g"}
-
-
-def test_manual_optimization_training_step_signature(tmpdir):
-    """Test that Lightning raises an exception if the training_step signature has an optimier_idx by mistake."""
-
-    class ConfusedAutomaticManualModel(ManualOptModel):
-        def training_step(self, batch, batch_idx, optimizer_idx):
-            return super().training_step(batch, batch_idx)
-
-    model = ConfusedAutomaticManualModel()
-    trainer = Trainer(default_root_dir=tmpdir, fast_dev_run=2)
-
-    with pytest.raises(ValueError, match="Your `LightningModule.training_step` signature contains an `optimizer_idx`"):
-        trainer.fit(model)

@@ -1,4 +1,4 @@
-# Copyright The PyTorch Lightning team.
+# Copyright The Lightning AI team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,10 +22,10 @@ import torch
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, random_split
 
-from pytorch_lightning import cli_lightning_logo, LightningDataModule, LightningModule
-from pytorch_lightning.cli import LightningCLI
-from pytorch_lightning.demos.mnist_datamodule import MNIST
-from pytorch_lightning.utilities.imports import _TORCHVISION_AVAILABLE
+from lightning.pytorch import cli_lightning_logo, LightningDataModule, LightningModule
+from lightning.pytorch.cli import LightningCLI
+from lightning.pytorch.demos.mnist_datamodule import MNIST
+from lightning.pytorch.utilities.imports import _TORCHVISION_AVAILABLE
 
 if _TORCHVISION_AVAILABLE:
     from torchvision import transforms
@@ -124,7 +124,9 @@ class MyDataModule(LightningDataModule):
 
 
 def cli_main():
-    cli = LightningCLI(LitClassifier, MyDataModule, seed_everything_default=1234, save_config_overwrite=True, run=False)
+    cli = LightningCLI(
+        LitClassifier, MyDataModule, seed_everything_default=1234, save_config_kwargs={"overwrite": True}, run=False
+    )
     cli.trainer.fit(cli.model, datamodule=cli.datamodule)
     cli.trainer.test(ckpt_path="best", datamodule=cli.datamodule)
     predictions = cli.trainer.predict(ckpt_path="best", datamodule=cli.datamodule)
