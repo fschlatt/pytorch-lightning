@@ -490,7 +490,7 @@ class WandbLogger(Logger):
         Returns:
             The path to the save directory.
         """
-        return self._save_dir
+        return self.experiment.dir
 
     @property
     def name(self) -> Optional[str]:
