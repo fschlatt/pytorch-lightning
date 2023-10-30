@@ -114,11 +114,13 @@ precision
 
     DeepSpeedPrecisionPlugin
     DoublePrecisionPlugin
-    FSDPMixedPrecisionPlugin
+    HalfPrecisionPlugin
+    FSDPPrecisionPlugin
     MixedPrecisionPlugin
     PrecisionPlugin
-    XLABf16PrecisionPlugin
     XLAPrecisionPlugin
+    TransformerEnginePrecisionPlugin
+    BitsandbytesPrecisionPlugin
 
 environments
 """"""""""""
