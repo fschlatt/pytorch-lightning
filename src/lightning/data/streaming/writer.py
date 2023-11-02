@@ -205,7 +205,10 @@ class BinaryWriter:
             max_index = self._max_index
 
         if len(items) == 0:
-            raise RuntimeError("The items shouldn't have an empty length. Something went wrong.")
+            raise RuntimeError(
+                "The items shouldn't have an empty length. Something went wrong."
+                f" Found {self._pretty_serialized_items()} with boundaries: {self._min_index}, {self._max_index}."
+            )
 
         sizes = list(map(len, items))
         offsets = np.array([0] + sizes).cumsum().astype(np.uint32)
@@ -412,3 +415,15 @@ class BinaryWriter:
             return f1 != f2
 
         return any(is_non_valid(f1, f2) for f1, f2 in zip(data_format_1, data_format_2))
+
+    def _pretty_serialized_items(self) -> Dict[int, Item]:
+        out = {}
+        for key, value in self._serialized_items.items():
+            # drop `data` as it would make logs unreadable.
+            out[key] = Item(
+                index=value.index,
+                bytes=value.bytes,
+                dim=value.dim,
+                data=b"",
+            )
+        return out
