@@ -37,6 +37,9 @@ class BaseItemLoader(ABC):
         self._chunks = chunks
         self._serializers = serializers
 
+    def state_dict(self) -> Dict:
+        return {}
+
     @abstractmethod
     def generate_intervals(self) -> List[Tuple[int, int]]:
         """Returns a list of tuple describing the indexes intervals of the chunks."""
@@ -71,11 +74,16 @@ class PyTreeLoader(BaseItemLoader):
             del self._chunk_filepaths[chunk_filepath]
 
         if chunk_filepath not in self._chunk_filepaths:
-            while not os.path.exists(chunk_filepath):
+            first_exists = exists = os.path.exists(chunk_filepath)
+
+            while not exists:
                 sleep(0.01)
+                exists = os.path.exists(chunk_filepath)
 
             # Wait to avoid any corruption when the file appears
-            sleep(0.01)
+            if not first_exists:
+                sleep(0.001)
+
             self._chunk_filepaths[chunk_filepath] = True
 
         with open(chunk_filepath, "rb", 0) as fp:
@@ -110,11 +118,15 @@ class TokensLoader(BaseItemLoader):
 
         super().__init__()
         self._block_size = block_size
-        self._intervals: List[Tuple[int, int]] = []
         self._mmaps: Dict[int, np.memmap] = {}
         self._buffers: Dict[int, bytes] = {}
         self._dtype: Optional[torch.dtype] = None
         self._chunk_filepaths: Dict[str, bool] = {}
+
+    def state_dict(self) -> Dict:
+        return {
+            "block_size": self._block_size,
+        }
 
     def setup(self, config: Dict, chunks: List, serializers: Dict[str, Serializer]) -> None:
         super().setup(config, chunks, serializers)
@@ -123,32 +135,41 @@ class TokensLoader(BaseItemLoader):
             raise ValueError("The provided chunks isn't properly setup.")
 
     def generate_intervals(self) -> List[Tuple[int, int]]:
+        intervals = []
         begin = 0
         end = 0
         for chunk in self._chunks:
             dim = chunk["dim"]
             num_blocks = dim // self._block_size
             end += num_blocks
-            self._intervals.append((begin, end))
+            intervals.append((begin, end))
             begin += num_blocks
-
-        return self._intervals
+        return intervals
 
     def load_item_from_chunk(self, index: int, chunk_index: int, chunk_filepath: str, begin: int) -> torch.Tensor:
         if chunk_filepath in self._chunk_filepaths and not os.path.isfile(chunk_filepath):
             del self._chunk_filepaths[chunk_filepath]
 
         if chunk_filepath not in self._chunk_filepaths:
-            while not os.path.exists(chunk_filepath):
+            first_exists = exists = os.path.exists(chunk_filepath)
+
+            while not exists:
                 sleep(0.01)
+                exists = os.path.exists(chunk_filepath)
 
             # Wait to avoid any corruption when the file appears
-            sleep(0.01)
+            if not first_exists:
+                sleep(0.001)
+
             self._chunk_filepaths[chunk_filepath] = True
 
         if chunk_index not in self._mmaps:
             # TODO: Add deletion and memmap close
             chunk = self._chunks[chunk_index]
+
+            # Skip the header
+            # The number of items + the number of offsets (number of items in the chunk + 1)
+            # multiplied by the header encoding dtype (np.uint32)
             offset = (1 + chunk["chunk_size"] + 1) * 4
             mmap = np.memmap(chunk_filepath, mode="r", order="C", offset=offset)
             self._mmaps[chunk_index] = mmap
@@ -157,5 +178,5 @@ class TokensLoader(BaseItemLoader):
         assert self._dtype
 
         buffer: bytes = self._buffers[chunk_index]
-        offset = self._dtype.itemsize * ((index - begin) if index >= begin else index + 1)
+        offset = self._dtype.itemsize * (index - begin) * self._block_size
         return torch.frombuffer(buffer, dtype=self._dtype, count=self._block_size, offset=offset)
