@@ -559,7 +559,7 @@ class WandbLogger(Logger):
             The path to the save directory.
 
         """
-        return self._save_dir
+        return self.experiment.dir
 
     @property
     @override
